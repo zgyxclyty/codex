@@ -26,6 +26,7 @@ pub struct ConfigProfile {
     /// Minimum weekly remaining ChatGPT usage; omitted disables the guard.
     #[schemars(range(min = 0, max = 100))]
     pub weekly_quota_reserve_percent: Option<u8>,
+    pub task_timer: Option<crate::config_toml::TaskTimerToml>,
     /// Optional explicit service tier request id for new turns (for example
     /// `default`, `priority`, or `flex`; legacy `fast` also works).
     pub service_tier: Option<String>,

@@ -8,6 +8,8 @@ For a full configuration reference, see [this documentation](https://developers.
 
 This fork additionally supports `weekly_quota_reserve_percent`; see
 [Weekly quota guard](./weekly-quota-guard.md) for its behavior and configuration.
+Use [`task_timer`](./task-timer.md) to enable Fast mode or interrupt the current
+task at a specified timestamp.
 
 ## Lifecycle hooks
 

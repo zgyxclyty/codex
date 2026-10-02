@@ -322,6 +322,13 @@ pub(crate) async fn test_config() -> Config {
     .expect("load default test config")
 }
 
+/// Validated one-shot session timer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskTimerConfig {
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub action: codex_config::config_toml::TaskTimerAction,
+}
+
 /// Application configuration loaded from disk and merged with overrides.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Permissions {
@@ -639,6 +646,9 @@ pub struct Config {
     /// Minimum weekly included usage to preserve before sending ChatGPT requests.
     /// `None` disables the guard; `Some(0)` still blocks exhausted included usage.
     pub weekly_quota_reserve_percent: Option<u8>,
+
+    /// One-shot action at an absolute time; absent disables the timer.
+    pub task_timer: Option<TaskTimerConfig>,
 
     /// Token usage threshold triggering auto-compaction of conversation history.
     pub model_auto_compact_token_limit: Option<i64>,
@@ -3267,6 +3277,17 @@ impl Config {
                 "weekly_quota_reserve_percent must be between 0 and 100",
             ));
         }
+        let task_timer = cfg.task_timer.as_ref().map(|timer| {
+            chrono::DateTime::parse_from_rfc3339(&timer.at)
+                .map(|at| TaskTimerConfig {
+                    at: at.with_timezone(&chrono::Utc),
+                    action: timer.action,
+                })
+                .map_err(|error| std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("task_timer.at must be an RFC 3339 timestamp with a UTC offset: {error}"),
+                ))
+        }).transpose()?;
         if cfg.model_post_turn_compact_threshold_percent.is_some_and(|percent| percent > 100) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -4303,6 +4324,7 @@ impl Config {
             review_model,
             model_context_window: cfg.model_context_window,
             weekly_quota_reserve_percent: cfg.weekly_quota_reserve_percent,
+            task_timer,
             model_auto_compact_token_limit: cfg.model_auto_compact_token_limit,
             model_auto_compact_token_limit_scope: cfg
                 .model_auto_compact_token_limit_scope

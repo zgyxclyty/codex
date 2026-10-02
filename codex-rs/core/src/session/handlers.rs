@@ -427,6 +427,14 @@ pub(super) async fn submission_loop(
 ) {
     // Session shutdown and tree shutdown both use the existing teardown handler.
     let mut shutdown_received = false;
+    let mut task_timer = if matches!(
+        sess.state.lock().await.session_configuration.session_source,
+        codex_protocol::protocol::SessionSource::SubAgent(_)
+    ) {
+        None
+    } else {
+        config.task_timer.clone()
+    };
     let mut mailbox = sess.input_queue.mailbox_updates();
     if let Some(updates) = &mut mailbox {
         updates.mark_changed();
@@ -437,6 +445,17 @@ pub(super) async fn submission_loop(
             _ = sess.services.local_agent_runtime.shutdown.cancelled() => {
                 shutdown_received = shutdown(&sess, super::new_submission_id()).await;
                 break;
+            }
+            _ = async {
+                match task_timer.as_ref() {
+                    Some(timer) => super::task_timer::wait_until(timer.at).await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some(timer) = task_timer.take() {
+                    super::task_timer::fire(&sess, timer.action).await;
+                }
+                continue;
             }
             sub = rx_sub.recv() => match sub {
                 Ok(sub) => sub,

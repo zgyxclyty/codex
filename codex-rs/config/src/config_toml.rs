@@ -160,6 +160,24 @@ pub struct FeatureToggleToml {
     pub enabled: Option<bool>,
 }
 
+/// One-shot wall-clock action for a root session.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskTimerToml {
+    /// Absolute RFC 3339 timestamp, including a UTC offset (for example +08:00).
+    pub at: String,
+    pub action: TaskTimerAction,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTimerAction {
+    /// Enable Fast mode for subsequent requests, including the running turn.
+    Fast,
+    /// Interrupt the running task using the normal interruption lifecycle.
+    Stop,
+}
+
 /// Base config deserialized from ~/.codex/config.toml.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -183,6 +201,10 @@ pub struct ConfigToml {
     /// cannot be verified. Valid values are 0–100.
     #[schemars(range(min = 0, max = 100))]
     pub weekly_quota_reserve_percent: Option<u8>,
+
+    /// One-shot action at an absolute RFC 3339 time with a UTC offset.
+    /// Applies to root sessions; omit to disable the timer.
+    pub task_timer: Option<TaskTimerToml>,
 
     /// Token usage threshold triggering auto-compaction of conversation history.
     pub model_auto_compact_token_limit: Option<i64>,

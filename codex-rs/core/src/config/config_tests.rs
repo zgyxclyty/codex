@@ -261,6 +261,67 @@ async fn weekly_quota_reserve_config_validates_range_and_preserves_zero() -> any
 }
 
 #[tokio::test]
+async fn task_timer_config_validates_time_zone_and_action() -> anyhow::Result<()> {
+    use codex_config::config_toml::TaskTimerAction;
+    let codex_home = tempdir()?;
+    for action in ["fast", "stop"] {
+        let cfg: ConfigToml = toml::from_str(&format!(
+            "[task_timer]\nat = \"2026-10-04T00:30:00+08:00\"\naction = \"{action}\""
+        ))?;
+        let config = Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.abs(),
+        )
+        .await?;
+        let timer = config.task_timer.expect("configured timer");
+        assert_eq!(timer.at.to_rfc3339(), "2026-10-03T16:30:00+00:00");
+        assert_eq!(
+            timer.action,
+            if action == "fast" {
+                TaskTimerAction::Fast
+            } else {
+                TaskTimerAction::Stop
+            }
+        );
+    }
+    for at in [
+        "",
+        "00:30",
+        "2026-10-04T00:30:00",
+        "2026-02-30T00:30:00+08:00",
+    ] {
+        let cfg: ConfigToml = toml::from_str(&format!(
+            "task_timer = {{ at = \"{at}\", action = \"fast\" }}"
+        ))?;
+        let error = Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.abs(),
+        )
+        .await
+        .expect_err("invalid timestamp");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("task_timer.at"));
+    }
+    for value in [
+        "task_timer = { at = \"2026-10-04T00:30:00Z\", action = \"unknown\" }",
+        "task_timer = { at = \"2026-10-04T00:30:00Z\" }",
+        "task_timer = { at = \"2026-10-04T00:30:00Z\", action = \"fast\", typo = true }",
+    ] {
+        assert!(toml::from_str::<ConfigToml>(value).is_err());
+    }
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+    assert!(config.task_timer.is_none());
+    Ok(())
+}
+
+#[tokio::test]
 async fn load_config_applies_optional_mcp_startup_grace() -> std::io::Result<()> {
     let codex_home = tempdir()?;
     let config_toml: ConfigToml = toml::from_str("mcp_optional_startup_grace_ms = 2500")
