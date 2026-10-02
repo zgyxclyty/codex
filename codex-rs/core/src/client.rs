@@ -134,6 +134,7 @@ use crate::feedback_tags;
 use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::subagent_header_value;
 use crate::util::emit_feedback_auth_recovery_tags;
+use crate::weekly_quota::WeeklyQuotaReserve;
 use codex_feedback::FeedbackRequestTags;
 use codex_feedback::emit_feedback_request_tags_with_auth_env;
 use codex_login::auth::AgentIdentityAuthPolicy;
@@ -272,6 +273,7 @@ pub struct ModelClient {
     restored_history: bool,
     request_contributors: Vec<Arc<dyn codex_extension_api::ModelRequestContributor>>,
     executed_tool_calls: Option<ExecutedToolCalls>,
+    weekly_quota_reserve: Option<WeeklyQuotaReserve>,
     // Resolved once when the session is created, like other session feature flags.
     api_key_cyber_access_programs: cyber_access_program::ApiKeyCyberAccessPrograms,
 }
@@ -543,6 +545,7 @@ impl ModelClient {
             restored_history: false,
             request_contributors,
             executed_tool_calls: None,
+            weekly_quota_reserve: None,
             api_key_cyber_access_programs:
                 cyber_access_program::ApiKeyCyberAccessPrograms::UnsupportedProvider,
         }
@@ -551,6 +554,34 @@ impl ModelClient {
     pub(crate) fn with_executed_tool_calls(mut self, recorder: ExecutedToolCalls) -> Self {
         self.executed_tool_calls = Some(recorder);
         self
+    }
+
+    /// Protect included ChatGPT usage at every model request boundary, including
+    /// continuations, compaction, and background memory summaries.
+    pub fn with_weekly_quota_reserve(
+        mut self,
+        percent: Option<u8>,
+        chatgpt_base_url: String,
+    ) -> Self {
+        self.weekly_quota_reserve =
+            percent.map(|percent| WeeklyQuotaReserve::new(percent, chatgpt_base_url));
+        self
+    }
+
+    async fn check_weekly_quota_reserve(
+        &self,
+        auth: Option<&CodexAuth>,
+        model: Option<&str>,
+    ) -> Result<()> {
+        if !self.uses_codex_backend(auth) {
+            return Ok(());
+        }
+        if let Some(guard) = &self.weekly_quota_reserve {
+            guard
+                .check(auth, model, self.http_client_factory.clone())
+                .await?;
+        }
+        Ok(())
     }
 
     pub(crate) fn reasoning_effort_override_enabled(&self, model_info: &ModelInfo) -> bool {
@@ -684,6 +715,8 @@ impl ModelClient {
         let client_setup = self
             .current_client_setup(ClientRouting::ConfiguredProvider)
             .await?;
+        self.check_weekly_quota_reserve(client_setup.auth.as_ref(), None)
+            .await?;
         if let Some(header_value) = self.generate_attestation_header_for().await {
             extra_headers.insert(X_OAI_ATTESTATION_HEADER, header_value);
         }
@@ -743,6 +776,8 @@ impl ModelClient {
 
         let client_setup = self
             .current_client_setup(ClientRouting::ConfiguredProvider)
+            .await?;
+        self.check_weekly_quota_reserve(client_setup.auth.as_ref(), Some(&model_info.slug))
             .await?;
         let transport = self.build_api_transport(
             &client_setup.api_provider,
@@ -1670,6 +1705,9 @@ impl ModelClientSession {
                 .client
                 .current_client_setup(ClientRouting::Workspace)
                 .await?;
+            self.client
+                .check_weekly_quota_reserve(client_setup.auth.as_ref(), Some(&model_info.slug))
+                .await?;
             let include_internal = self
                 .client
                 .state
@@ -1865,6 +1903,9 @@ impl ModelClientSession {
             let client_setup = self
                 .client
                 .current_client_setup(ClientRouting::Workspace)
+                .await?;
+            self.client
+                .check_weekly_quota_reserve(client_setup.auth.as_ref(), Some(&model_info.slug))
                 .await?;
             let include_internal = self
                 .client

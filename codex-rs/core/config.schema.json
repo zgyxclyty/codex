@@ -1324,6 +1324,13 @@
         "web_search": {
           "$ref": "#/definitions/WebSearchMode"
         },
+        "weekly_quota_reserve_percent": {
+          "description": "Minimum weekly remaining ChatGPT usage; omitted disables the guard.",
+          "format": "uint8",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "integer"
+        },
         "windows": {
           "allOf": [
             {
@@ -7815,6 +7822,13 @@
         }
       ],
       "description": "Controls the web search tool mode: disabled, cached, indexed, or live."
+    },
+    "weekly_quota_reserve_percent": {
+      "description": "Stop new ChatGPT model requests when weekly remaining usage is at or below this percentage. Omitted disables the guard; zero still prevents requests after included usage is exhausted. Enabled guards fail closed if usage cannot be verified. Valid values are 0–100.",
+      "format": "uint8",
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "type": "integer"
     },
     "windows": {
       "allOf": [

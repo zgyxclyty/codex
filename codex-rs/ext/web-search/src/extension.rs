@@ -8,6 +8,7 @@ use codex_api::LocationType;
 use codex_api::SearchContextSize;
 use codex_api::SearchFilters;
 use codex_api::SearchSettings;
+use codex_core::WeeklyQuotaReserve;
 use codex_core::config::Config;
 use codex_extension_api::ConfigContributor;
 use codex_extension_api::ExtensionData;
@@ -37,6 +38,7 @@ struct WebSearchExtensionConfig {
     http_client_factory: HttpClientFactory,
     provider: ModelProviderInfo,
     settings: SearchSettings,
+    weekly_quota_reserve: Option<WeeklyQuotaReserve>,
 }
 
 impl From<&Config> for WebSearchExtensionConfig {
@@ -51,6 +53,9 @@ impl From<&Config> for WebSearchExtensionConfig {
             http_client_factory: config.http_client_factory(),
             provider: config.model_provider.clone(),
             settings: search_settings(config, web_search_mode),
+            weekly_quota_reserve: config
+                .weekly_quota_reserve_percent
+                .map(|percent| WeeklyQuotaReserve::new(percent, config.chatgpt_base_url.clone())),
         }
     }
 }
@@ -142,6 +147,7 @@ impl ToolContributor for WebSearchExtension {
                 Some(self.auth_manager.clone()),
             ),
             settings: config.settings.clone(),
+            weekly_quota_reserve: config.weekly_quota_reserve.clone(),
             originator: thread_store
                 .get::<ThreadOriginator>()
                 .map(|originator| originator.0.clone()),
@@ -212,6 +218,7 @@ mod tests {
             http_client_factory: HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
             provider: ModelProviderInfo::create_openai_provider(/*base_url*/ None),
             settings: Default::default(),
+            weekly_quota_reserve: None,
         });
 
         let tool_names = registry

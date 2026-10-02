@@ -1092,6 +1092,192 @@ fn test_session_telemetry() -> SessionTelemetry {
     )
 }
 
+fn weekly_quota_model_client(
+    server: &MockServer,
+    websockets: bool,
+    reserve: Option<u8>,
+) -> ModelClient {
+    let mut client = test_model_client(SessionSource::Cli);
+    let mut provider = ModelProviderInfo::create_openai_provider(Some(server.uri()));
+    provider.supports_websockets = websockets;
+    Arc::get_mut(&mut client.state).unwrap().provider = create_model_provider(
+        provider,
+        Some(AuthManager::from_auth_for_testing(
+            CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+        )),
+    );
+    client.with_weekly_quota_reserve(reserve, server.uri())
+}
+
+fn weekly_quota_usage_response(used: u32) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({
+        "plan_type": "plus",
+        "rate_limit": {
+            "allowed": true, "limit_reached": false,
+            "secondary_window": {"used_percent": used, "limit_window_seconds": 604800,
+                "reset_after_seconds": 604800, "reset_at": 2000000000}
+        }
+    }))
+}
+
+#[tokio::test]
+async fn weekly_quota_blocks_http_websocket_and_prewarm_before_model_request() {
+    for websockets in [false, true] {
+        for response in [weekly_quota_usage_response(90), ResponseTemplate::new(503)] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/api/codex/usage"))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+            let client = weekly_quota_model_client(&server, websockets, Some(10));
+            let metadata = test_responses_metadata_for_client(
+                &client,
+                Some("turn-1"),
+                "window-1".into(),
+                None,
+                TestCodexResponsesRequestKind::Turn,
+            );
+            let result = client
+                .new_session()
+                .stream(
+                    &Prompt::default(),
+                    &test_model_info(),
+                    &test_session_telemetry(),
+                    None,
+                    codex_protocol::config_types::ReasoningSummary::None,
+                    None,
+                    &metadata,
+                    &InferenceTraceContext::disabled(),
+                )
+                .await;
+            let error = result.err().expect("quota guard should stop generation");
+            assert!(error.to_string().contains("Weekly quota guard stopped"));
+            assert!(error.retry_delay(1).is_none());
+            assert_eq!(
+                server.received_requests().await.unwrap().len(),
+                1,
+                "only usage lookup should reach the server"
+            );
+
+            if websockets {
+                server.reset().await;
+                Mock::given(method("GET"))
+                    .and(path("/api/codex/usage"))
+                    .respond_with(weekly_quota_usage_response(90))
+                    .expect(1)
+                    .mount(&server)
+                    .await;
+                let error = client
+                    .new_session()
+                    .prewarm_websocket(
+                        &Prompt::default(),
+                        &test_model_info(),
+                        &test_session_telemetry(),
+                        None,
+                        codex_protocol::config_types::ReasoningSummary::None,
+                        None,
+                        &metadata,
+                    )
+                    .await
+                    .unwrap_err();
+                assert!(error.to_string().contains("Weekly quota guard stopped"));
+                assert_eq!(server.received_requests().await.unwrap().len(), 1);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn weekly_quota_stops_later_requests_in_the_same_turn() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/codex/usage"))
+        .respond_with(weekly_quota_usage_response(89))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .respond_with(ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"output\":[]}}\n\n",
+        ))
+        .expect(1)
+        .mount(&server).await;
+    let client = weekly_quota_model_client(&server, false, Some(10));
+    let metadata = test_responses_metadata_for_client(
+        &client,
+        Some("turn-1"),
+        "window-1".into(),
+        None,
+        TestCodexResponsesRequestKind::Turn,
+    );
+    let mut session = client.new_session();
+    let mut stream = session
+        .stream(
+            &Prompt::default(),
+            &test_model_info(),
+            &test_session_telemetry(),
+            None,
+            codex_protocol::config_types::ReasoningSummary::None,
+            None,
+            &metadata,
+            &InferenceTraceContext::disabled(),
+        )
+        .await
+        .expect("headroom should allow the first request");
+    while let Some(event) = stream.next().await {
+        event.expect("first response should complete");
+    }
+    server.verify().await;
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/api/codex/usage"))
+        .respond_with(weekly_quota_usage_response(90))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let result = session
+        .stream(
+            &Prompt::default(),
+            &test_model_info(),
+            &test_session_telemetry(),
+            None,
+            codex_protocol::config_types::ReasoningSummary::None,
+            None,
+            &metadata,
+            &InferenceTraceContext::disabled(),
+        )
+        .await;
+    assert!(
+        result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("Weekly quota guard stopped")
+    );
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        1,
+        "continuation must only query usage"
+    );
+}
+
+#[tokio::test]
+async fn weekly_quota_disabled_does_not_query_usage() {
+    let server = MockServer::start().await;
+    let client = weekly_quota_model_client(&server, false, None);
+    client
+        .check_weekly_quota_reserve(
+            Some(&CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+            Some("gpt-test"),
+        )
+        .await
+        .unwrap();
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
 #[test]
 fn websocket_continuation_reset_reason_survives_failed_reconnect_and_turn_boundary() {
     for (reason, later_reason) in [

@@ -6,6 +6,9 @@ For advanced configuration instructions, see [this documentation](https://develo
 
 For a full configuration reference, see [this documentation](https://developers.openai.com/codex/config-reference).
 
+This fork additionally supports `weekly_quota_reserve_percent`; see
+[Weekly quota guard](./weekly-quota-guard.md) for its behavior and configuration.
+
 ## Lifecycle hooks
 
 Admins can set top-level `allow_managed_hooks_only = true` in

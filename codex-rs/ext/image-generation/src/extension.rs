@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use codex_core::WeeklyQuotaReserve;
 use codex_core::config::Config;
 use codex_extension_api::ConfigContributor;
 use codex_extension_api::ExtensionData;
@@ -34,6 +35,7 @@ struct ImageGenerationExtensionConfig {
     http_client_factory: HttpClientFactory,
     provider: ModelProviderInfo,
     save_root: Option<AbsolutePathBuf>,
+    weekly_quota_reserve: Option<WeeklyQuotaReserve>,
 }
 
 impl ImageGenerationExtensionConfig {
@@ -46,6 +48,9 @@ impl ImageGenerationExtensionConfig {
             http_client_factory: config.http_client_factory(),
             provider: config.model_provider.clone(),
             save_root: resolve_save_root(config),
+            weekly_quota_reserve: config
+                .weekly_quota_reserve_percent
+                .map(|percent| WeeklyQuotaReserve::new(percent, config.chatgpt_base_url.clone())),
         }
     }
 }
@@ -104,7 +109,8 @@ impl ToolContributor for ImageGenerationExtension {
                 thread_store
                     .get::<ThreadOriginator>()
                     .map(|originator| originator.0.clone()),
-            ),
+            )
+            .with_weekly_quota_reserve(config.weekly_quota_reserve.clone()),
             config.save_root.clone(),
             thread_store.level_id().to_string(),
         ))]

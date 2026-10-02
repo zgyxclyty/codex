@@ -233,6 +233,34 @@ async fn load_config_normalizes_relative_cwd_override() -> std::io::Result<()> {
 }
 
 #[tokio::test]
+async fn weekly_quota_reserve_config_validates_range_and_preserves_zero() -> anyhow::Result<()> {
+    for percent in [None, Some(0), Some(10), Some(100), Some(101)] {
+        let codex_home = tempdir()?;
+        let result = Config::load_from_base_config_with_overrides(
+            ConfigToml {
+                weekly_quota_reserve_percent: percent,
+                ..Default::default()
+            },
+            ConfigOverrides::default(),
+            codex_home.abs(),
+        )
+        .await;
+        if percent == Some(101) {
+            assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+        } else {
+            assert_eq!(result?.weekly_quota_reserve_percent, percent);
+        }
+    }
+    for value in ["-1", "256", "10.5"] {
+        assert!(
+            toml::from_str::<ConfigToml>(&format!("weekly_quota_reserve_percent = {value}"))
+                .is_err()
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn load_config_applies_optional_mcp_startup_grace() -> std::io::Result<()> {
     let codex_home = tempdir()?;
     let config_toml: ConfigToml = toml::from_str("mcp_optional_startup_grace_ms = 2500")

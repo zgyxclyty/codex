@@ -1789,6 +1789,10 @@ impl Session {
                     workspace_routing.as_ref().clone(),
                     extensions.model_request_contributors().to_vec(),
                 )
+                .with_weekly_quota_reserve(
+                    config.weekly_quota_reserve_percent,
+                    config.chatgpt_base_url.clone(),
+                )
                 .with_executed_tool_calls(executed_tool_calls.clone())
                 .with_restored_history(matches!(
                     &initial_history,

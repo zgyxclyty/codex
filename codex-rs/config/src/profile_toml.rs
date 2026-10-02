@@ -23,6 +23,9 @@ use codex_protocol::protocol::AskForApproval;
 #[schemars(deny_unknown_fields)]
 pub struct ConfigProfile {
     pub model: Option<String>,
+    /// Minimum weekly remaining ChatGPT usage; omitted disables the guard.
+    #[schemars(range(min = 0, max = 100))]
+    pub weekly_quota_reserve_percent: Option<u8>,
     /// Optional explicit service tier request id for new turns (for example
     /// `default`, `priority`, or `flex`; legacy `fast` also works).
     pub service_tier: Option<String>,

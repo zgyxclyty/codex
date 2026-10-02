@@ -340,6 +340,10 @@ impl MemoryStartupContext {
             config.http_client_factory(),
             config.workspace_routing_context(),
             Vec::new(),
+        )
+        .with_weekly_quota_reserve(
+            config.weekly_quota_reserve_percent,
+            config.chatgpt_base_url.clone(),
         );
 
         let mut client_session = model_client.new_session();

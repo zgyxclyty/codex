@@ -5,6 +5,7 @@ use codex_api::ImageResponse;
 use codex_api::ImagesClient;
 use codex_api::ReqwestTransport;
 use codex_api::map_api_error;
+use codex_core::WeeklyQuotaReserve;
 use codex_http_client::ClientRouteClass;
 use codex_http_client::HttpClientFactory;
 use codex_login::default_client::add_originator_header;
@@ -23,6 +24,13 @@ pub(crate) struct ImageBackendError {
 }
 
 impl ImageBackendError {
+    fn from_codex_error(codex_error: CodexErr) -> Self {
+        Self {
+            message: codex_error.to_string(),
+            codex_error,
+            imagegen_request_id: None,
+        }
+    }
     fn from_image_request(error: ImageRequestError) -> Self {
         let (error, imagegen_request_id) = error.into_parts();
         let message = error.to_string();
@@ -59,6 +67,7 @@ pub(crate) struct CodexImagesBackend {
     provider: SharedModelProvider,
     http_client_factory: HttpClientFactory,
     originator: Option<String>,
+    weekly_quota_reserve: Option<WeeklyQuotaReserve>,
 }
 
 impl CodexImagesBackend {
@@ -72,11 +81,23 @@ impl CodexImagesBackend {
             provider,
             http_client_factory,
             originator,
+            weekly_quota_reserve: None,
         }
+    }
+
+    pub(crate) fn with_weekly_quota_reserve(mut self, guard: Option<WeeklyQuotaReserve>) -> Self {
+        self.weekly_quota_reserve = guard;
+        self
     }
 
     /// Resolves the provider and auth required for the current image API request.
     async fn client(&self) -> Result<ImagesClient<ReqwestTransport>, ImageBackendError> {
+        if let Some(guard) = &self.weekly_quota_reserve {
+            guard
+                .check_provider(&self.provider, None, self.http_client_factory.clone())
+                .await
+                .map_err(ImageBackendError::from_codex_error)?;
+        }
         let provider = self
             .provider
             .api_provider()
@@ -138,4 +159,86 @@ fn image_request_headers(originator: Option<&str>, turn_id: &str) -> HeaderMap {
         add_originator_header(&mut headers, originator);
     }
     headers
+}
+
+#[cfg(test)]
+mod weekly_quota_tests {
+    use super::*;
+    use codex_http_client::OutboundProxyPolicy;
+    use codex_login::AuthManager;
+    use codex_login::CodexAuth;
+    use codex_model_provider::create_model_provider;
+    use codex_model_provider_info::ModelProviderInfo;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
+
+    #[tokio::test]
+    async fn weekly_quota_blocks_image_generation_and_edits() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/codex/usage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "plan_type": "plus",
+                "rate_limit": {
+                    "allowed": true, "limit_reached": false,
+                    "secondary_window": {"used_percent": 90, "limit_window_seconds": 604800,
+                        "reset_after_seconds": 604800, "reset_at": 2000000000}
+                },
+                "credits": {"has_credits": true, "unlimited": true, "balance": "10000"}
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let backend = CodexImagesBackend::new(
+            create_model_provider(
+                ModelProviderInfo::create_openai_provider(Some(server.uri())),
+                Some(AuthManager::from_auth_for_testing(
+                    CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+                )),
+            ),
+            HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            None,
+        )
+        .with_weekly_quota_reserve(Some(WeeklyQuotaReserve::new(10, server.uri())));
+        let generated = backend
+            .generate(
+                ImageGenerationRequest {
+                    prompt: "test".into(),
+                    background: None,
+                    model: "gpt-image-2".into(),
+                    n: None,
+                    quality: None,
+                    size: None,
+                },
+                "turn-1",
+            )
+            .await;
+        let edited = backend
+            .edit(
+                ImageEditRequest {
+                    images: Vec::new(),
+                    prompt: "test".into(),
+                    background: None,
+                    model: "gpt-image-2".into(),
+                    n: None,
+                    quality: None,
+                    size: None,
+                },
+                "turn-1",
+            )
+            .await;
+        for result in [generated, edited] {
+            let error = result.err().expect("guard must stop image requests");
+            assert!(error.message().contains("Weekly quota guard stopped"));
+            assert!(error.codex_error().retry_delay(1).is_none());
+        }
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            2,
+            "only usage lookups should reach the server"
+        );
+    }
 }

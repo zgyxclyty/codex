@@ -49,6 +49,7 @@ pub(crate) struct WebSearchTool {
     pub(crate) provider: SharedModelProvider,
     pub(crate) settings: SearchSettings,
     pub(crate) originator: Option<String>,
+    pub(crate) weekly_quota_reserve: Option<codex_core::WeeklyQuotaReserve>,
 }
 
 impl<'call> ToolExecutor<ToolCall<'call>> for WebSearchTool {
@@ -100,6 +101,16 @@ impl WebSearchTool {
     ) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
         let commands = parse_commands(&call)?;
         let command_action = command_action(&commands);
+        if let Some(guard) = &self.weekly_quota_reserve {
+            guard
+                .check_provider(
+                    &self.provider,
+                    Some(&call.model),
+                    self.http_client_factory.clone(),
+                )
+                .await
+                .map_err(|err| FunctionCallError::Fatal(err.to_string()))?;
+        }
         let provider = self
             .provider
             .api_provider()
@@ -279,6 +290,81 @@ mod tests {
     use super::command_action;
     use super::search_request_headers;
     use codex_core::X_CODEX_TURN_METADATA_HEADER;
+
+    #[tokio::test]
+    async fn weekly_quota_blocks_standalone_search_requests() {
+        use super::*;
+        use codex_extension_api::ConversationHistory;
+        use codex_extension_api::NoopTurnItemEmitter;
+        use codex_extension_api::ToolCallSource;
+        use codex_extension_api::ToolPayload;
+        use codex_http_client::OutboundProxyPolicy;
+        use codex_login::AuthManager;
+        use codex_login::CodexAuth;
+        use codex_model_provider::create_model_provider;
+        use codex_model_provider_info::ModelProviderInfo;
+        use codex_protocol::protocol::TruncationPolicy;
+        use std::sync::Arc;
+        use wiremock::Mock;
+        use wiremock::MockServer;
+        use wiremock::ResponseTemplate;
+        use wiremock::matchers::method;
+        use wiremock::matchers::path;
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/codex/usage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "plan_type": "plus",
+                "rate_limit": {
+                    "allowed": true, "limit_reached": false,
+                    "secondary_window": {"used_percent": 90, "limit_window_seconds": 604800,
+                        "reset_after_seconds": 604800, "reset_at": 2000000000}
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let tool = WebSearchTool {
+            session_id: "test-session".into(),
+            http_client_factory: HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),
+            provider: create_model_provider(
+                ModelProviderInfo::create_openai_provider(Some(server.uri())),
+                Some(AuthManager::from_auth_for_testing(
+                    CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+                )),
+            ),
+            settings: SearchSettings::default(),
+            originator: None,
+            weekly_quota_reserve: Some(codex_core::WeeklyQuotaReserve::new(10, server.uri())),
+        };
+        let result = tool
+            .handle_call(ToolCall {
+                turn_id: "turn-1".into(),
+                call_id: "call-1".into(),
+                tool_name: ToolName::namespaced(WEB_NAMESPACE, RUN_TOOL_NAME),
+                model: "gpt-test".into(),
+                codex_turn_metadata: None,
+                truncation_policy: TruncationPolicy::Bytes(1024),
+                source: ToolCallSource::Direct,
+                conversation_history: ConversationHistory::default(),
+                turn_item_emitter: Arc::new(NoopTurnItemEmitter),
+                environments: Vec::new(),
+                payload: ToolPayload::Function {
+                    arguments: "{}".into(),
+                },
+            })
+            .await;
+        let error = result.err().expect("guard must stop web requests");
+        assert!(
+            matches!(error, FunctionCallError::Fatal(message) if message.contains("Weekly quota guard stopped"))
+        );
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "only usage lookup should reach the server"
+        );
+    }
 
     #[test]
     fn search_request_headers_forward_thread_originator_and_turn_metadata() {

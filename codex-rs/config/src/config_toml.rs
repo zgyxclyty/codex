@@ -177,6 +177,13 @@ pub struct ConfigToml {
     /// Size of the context window for the model, in tokens.
     pub model_context_window: Option<i64>,
 
+    /// Stop new ChatGPT model requests when weekly remaining usage is at or below
+    /// this percentage. Omitted disables the guard; zero still prevents requests
+    /// after included usage is exhausted. Enabled guards fail closed if usage
+    /// cannot be verified. Valid values are 0–100.
+    #[schemars(range(min = 0, max = 100))]
+    pub weekly_quota_reserve_percent: Option<u8>,
+
     /// Token usage threshold triggering auto-compaction of conversation history.
     pub model_auto_compact_token_limit: Option<i64>,
 

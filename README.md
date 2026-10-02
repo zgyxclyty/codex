@@ -11,6 +11,9 @@ If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="http
 
 ## Quickstart
 
+This fork adds a configurable weekly quota reserve for ChatGPT requests. See
+[Weekly quota guard](./docs/weekly-quota-guard.md) for building and enabling it.
+
 ### Installing and running Codex CLI
 
 Run the following on Mac or Linux to install Codex CLI:
