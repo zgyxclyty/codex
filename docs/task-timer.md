@@ -16,7 +16,8 @@ Replace the example date and time with your deadline. `at` must be a quoted
 RFC 3339 timestamp with a timezone: `+08:00` is China time and `Z` is UTC.
 Bare clock times, timestamps without a timezone, and invalid actions are
 rejected during configuration loading. To interrupt the current task at that
-time, use `action = "stop"`.
+time, use `action = "stop"`. Use `action = "switch"` with `model`,
+`reasoning_effort`, or both to change model settings.
 
 The command-line override also works:
 
@@ -56,6 +57,54 @@ tier again; the timer will not override that change. It does not write a global
 The [weekly quota guard](./weekly-quota-guard.md) remains in force for Fast
 requests. Fast mode does not waive the reserve or authorize credit spending.
 
+## Model and reasoning effort
+
+To switch the root task to a selected model and reasoning effort at the deadline:
+
+```toml
+[features]
+step_model_switching = true
+
+[task_timer]
+at = "2026-10-04T00:30:00+08:00"
+action = "switch"
+model = "gpt-5.5"
+reasoning_effort = "low"
+```
+
+Choose a model and effort advertised by your model catalog. Examples of effort
+names include `low`, `medium`, `high`, and `xhigh`; supported values depend on the
+target model. A model-defined effort name is also accepted when advertised.
+
+Omit `model` to change only the reasoning effort. Omit `reasoning_effort` to
+change only the model and preserve the selected effort. If a preserved effort
+is unsupported by the target model, supply a compatible effort explicitly.
+At least one field is required for `switch`. These two fields are rejected with
+`fast` and `stop` to prevent silently ignoring a target.
+
+A successful switch updates both the running task's next-step settings and the
+thread defaults inherited by later turns. Captured steps and in-flight requests
+keep their original settings. Reasoning changes use the normal cache-preserving
+effort update mechanism. The TUI receives the model and effort settings update.
+Other preferences, including the requested service tier, remain selected and
+are resolved normally against the destination model. Already spawned agents
+keep their own model and reasoning selections.
+
+For a running task, the experimental `features.step_model_switching` feature
+must be enabled. The existing live-switch compatibility and managed-policy
+checks still apply, including the admitted approval and Guardian authority.
+An idle session can update its future-turn defaults without that feature.
+Unknown model metadata, unsupported reasoning effort, disabled live switching,
+incompatible authority, and a task or settings replacement during lookup reject
+the whole switch and emit a warning. Neither active settings nor future-turn
+defaults are changed on rejection. The timer does not restart the task or goal.
+Its successful settings commit preserves automatic goal continuation.
+
+The weekly quota guard checks later requests against the newly selected model
+as usual. A settings switch itself does not initiate a generation request or
+bypass the reserve. The switch is one-shot and does not change global model or
+reasoning settings in `config.toml`.
+
 ## Stop
 
 `action = "stop"` uses the CLI's normal task interruption lifecycle, cancelling
@@ -81,8 +130,10 @@ cargo run -p codex-config-schema --bin codex-write-config-schema
 cargo check -p codex-cli --bin codex
 ```
 
-Tests cover timestamp validation, timezone conversion, Fast feature and model
-support, settings captured before and after a switch, subsequent turns, normal
-task interruption, one-shot idle firing, expired deadlines, shutdown, and
-inherited timers in subagents. They run locally without consuming model usage.
+Tests cover timestamp and target validation, timezone conversion, Fast feature
+and model support, model-only and effort-only switches, combined switches,
+settings captured before and after a switch, subsequent turns, rejected
+switches without partial updates, task replacement during metadata lookup,
+normal task interruption, one-shot idle firing, expired deadlines, shutdown,
+and inherited timers in subagents. They run locally without consuming model usage.
 See [Weekly quota guard](./weekly-quota-guard.md#build-and-run) to build the fork.

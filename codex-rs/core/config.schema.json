@@ -4257,6 +4257,13 @@
             "stop"
           ],
           "type": "string"
+        },
+        {
+          "description": "Change the model, reasoning effort, or both for subsequent steps and turns.",
+          "enum": [
+            "switch"
+          ],
+          "type": "string"
         }
       ]
     },
@@ -4270,6 +4277,18 @@
         "at": {
           "description": "Absolute RFC 3339 timestamp, including a UTC offset (for example +08:00).",
           "type": "string"
+        },
+        "model": {
+          "description": "Target model for `action = \"switch\"`; omitted preserves the selection.",
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            }
+          ],
+          "description": "Target reasoning effort for `action = \"switch\"`; omitted preserves it."
         }
       },
       "required": [

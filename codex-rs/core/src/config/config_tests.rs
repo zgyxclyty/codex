@@ -322,6 +322,56 @@ async fn task_timer_config_validates_time_zone_and_action() -> anyhow::Result<()
 }
 
 #[tokio::test]
+async fn task_timer_switch_config_validates_targets() -> anyhow::Result<()> {
+    use codex_config::config_toml::TaskTimerAction;
+    let codex_home = tempdir()?;
+    for (targets, model, effort) in [
+        ("model = 'gpt-5.5'", Some("gpt-5.5"), None),
+        ("reasoning_effort = 'low'", None, Some(ReasoningEffort::Low)),
+        (
+            "model = 'gpt-5.5', reasoning_effort = 'high'",
+            Some("gpt-5.5"),
+            Some(ReasoningEffort::High),
+        ),
+    ] {
+        let cfg: ConfigToml = toml::from_str(&format!(
+            "task_timer = {{ at = '2026-10-04T00:30:00+08:00', action = 'switch', {targets} }}"
+        ))?;
+        let config = Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.abs(),
+        )
+        .await?;
+        let timer = config.task_timer.expect("timer");
+        assert_eq!(timer.action, TaskTimerAction::Switch);
+        assert_eq!(timer.model.as_deref(), model);
+        assert_eq!(timer.reasoning_effort, effort);
+    }
+    for (action, targets) in [
+        ("switch", ""),
+        ("switch", ", model = ''"),
+        ("switch", ", model = 'gpt 5.5'"),
+        ("fast", ", model = 'gpt-5.5'"),
+        ("stop", ", reasoning_effort = 'low'"),
+    ] {
+        let cfg: ConfigToml = toml::from_str(&format!(
+            "task_timer = {{ at = '2026-10-04T00:30:00Z', action = '{action}'{targets} }}"
+        ))?;
+        let error = Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.abs(),
+        )
+        .await
+        .expect_err("invalid target");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("task_timer"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn load_config_applies_optional_mcp_startup_grace() -> std::io::Result<()> {
     let codex_home = tempdir()?;
     let config_toml: ConfigToml = toml::from_str("mcp_optional_startup_grace_ms = 2500")

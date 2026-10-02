@@ -27,7 +27,7 @@ use std::sync::Arc;
 /// Temporary restrictions while approvals and Guardian still read the admitted
 /// `TurnContext`. Ordinary live authorization is validated separately. Remove
 /// these restrictions as their consumers migrate to captured step settings.
-fn check_legacy_turn_safety(
+pub(super) fn check_legacy_turn_safety(
     turn_context: &TurnContext,
     current: &ResolvedStepSettings,
     destination: &ResolvedStepSettings,
@@ -373,7 +373,7 @@ impl Session {
         TurnSettingsUpdateOutcome::Applied
     }
 
-    async fn prepare_step_settings_activation(
+    pub(super) async fn prepare_step_settings_activation(
         &self,
         turn_context: &TurnContext,
         current: &ResolvedStepSettings,
@@ -437,7 +437,7 @@ impl Session {
     }
 }
 
-fn any_environment_has_full_disk_write(
+pub(super) fn any_environment_has_full_disk_write(
     turn: &TurnContext,
     environments: &[TurnEnvironmentSelection],
 ) -> bool {

@@ -327,6 +327,8 @@ pub(crate) async fn test_config() -> Config {
 pub struct TaskTimerConfig {
     pub at: chrono::DateTime<chrono::Utc>,
     pub action: codex_config::config_toml::TaskTimerAction,
+    pub model: Option<String>,
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 /// Application configuration loaded from disk and merged with overrides.
@@ -3278,10 +3280,24 @@ impl Config {
             ));
         }
         let task_timer = cfg.task_timer.as_ref().map(|timer| {
+            use codex_config::config_toml::TaskTimerAction;
+            let invalid = |message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message);
+            if timer.action == TaskTimerAction::Switch {
+                if timer.model.is_none() && timer.reasoning_effort.is_none() {
+                    return Err(invalid("task_timer action 'switch' requires model or reasoning_effort"));
+                }
+                if timer.model.as_ref().is_some_and(|model| model.is_empty() || model.chars().any(char::is_whitespace)) {
+                    return Err(invalid("task_timer.model must be a non-empty model slug without whitespace"));
+                }
+            } else if timer.model.is_some() || timer.reasoning_effort.is_some() {
+                return Err(invalid("task_timer.model and reasoning_effort require action 'switch'"));
+            }
             chrono::DateTime::parse_from_rfc3339(&timer.at)
                 .map(|at| TaskTimerConfig {
                     at: at.with_timezone(&chrono::Utc),
                     action: timer.action,
+                    model: timer.model.clone(),
+                    reasoning_effort: timer.reasoning_effort.clone(),
                 })
                 .map_err(|error| std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,

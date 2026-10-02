@@ -453,7 +453,7 @@ pub(super) async fn submission_loop(
                 }
             } => {
                 if let Some(timer) = task_timer.take() {
-                    super::task_timer::fire(&sess, timer.action).await;
+                    super::task_timer::fire(&sess, &timer).await;
                 }
                 continue;
             }

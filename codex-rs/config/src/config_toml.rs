@@ -167,6 +167,10 @@ pub struct TaskTimerToml {
     /// Absolute RFC 3339 timestamp, including a UTC offset (for example +08:00).
     pub at: String,
     pub action: TaskTimerAction,
+    /// Target model for `action = "switch"`; omitted preserves the selection.
+    pub model: Option<String>,
+    /// Target reasoning effort for `action = "switch"`; omitted preserves it.
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
@@ -176,6 +180,8 @@ pub enum TaskTimerAction {
     Fast,
     /// Interrupt the running task using the normal interruption lifecycle.
     Stop,
+    /// Change the model, reasoning effort, or both for subsequent steps and turns.
+    Switch,
 }
 
 /// Base config deserialized from ~/.codex/config.toml.

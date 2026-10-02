@@ -13,8 +13,8 @@ If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="http
 
 This fork adds a configurable weekly quota reserve for ChatGPT requests. See
 [Weekly quota guard](./docs/weekly-quota-guard.md) for building and enabling it.
-It also supports a [task timer](./docs/task-timer.md) to enable Fast mode or
-interrupt a task at a specified time.
+It also supports a [task timer](./docs/task-timer.md) to switch models or reasoning
+effort, enable Fast mode, or interrupt a task at a specified time.
 
 ### Installing and running Codex CLI
 
